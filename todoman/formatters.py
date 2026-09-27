@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import contextlib
@@ -23,7 +24,7 @@ from todoman.model import TodoList
 
 def rgb_to_ansi(colour: str | None) -> str | None:
     """
-    Convert a string containing an RGB colour to ANSI escapes
+    Convert a string containing an RGB colour to ANSI escapes.
     """
     if not colour or not colour.startswith("#"):
         return None
@@ -48,23 +49,27 @@ class Formatter(ABC):
 
     @abstractmethod
     def compact(self, todo: Todo) -> str:
-        """Render a compact todo (usually in a single line)"""
+        """Render a compact todo (usually in a single line)."""
 
     @abstractmethod
-    def compact_multiple(self, todos: Iterable[Todo], hide_list: bool = False) -> str:
+    def compact_multiple(
+        self,
+        todos: Iterable[Todo],
+        hide_list: bool = False,
+    ) -> str:
         """Same as compact() but for multiple todos."""
 
     @abstractmethod
     def simple_action(self, action: str, todo: Todo) -> str:
-        """Render an action related to a todo (e.g.: compelete, undo, etc)."""
+        """Render an action related to a todo."""
 
     @abstractmethod
     def parse_priority(self, priority: str | None) -> int | None:
-        """Parse a priority"""
+        """Parse a priority."""
 
     @abstractmethod
     def detailed(self, todo: Todo) -> str:
-        """Returns a detailed representation of a task."""
+        """Return a detailed representation of a task."""
 
     @abstractmethod
     def format_datetime(self, value: date | None) -> str | int | None:
@@ -76,13 +81,11 @@ class Formatter(ABC):
 
     def parse_categories(self, categories: str) -> list[str]:
         """Parse multiple categories."""
-        # existing code assumes categories is list,
-        # but click passes tuple
         return list(categories)
 
 
 class InteractiveFormatter(Formatter):
-    """Formatter usable in the TUI"""
+    """Formatter usable in the TUI."""
 
     @abstractmethod
     def __init__(
@@ -100,23 +103,33 @@ class InteractiveFormatter(Formatter):
     def format_database(self, database: TodoList) -> str:
         """Format the name of a single database."""
         return "{}@{}".format(
-            rgb_to_ansi(database.colour) or "", click.style(database.name)
+            rgb_to_ansi(database.colour) or "",
+            click.style(database.name),
         )
 
+    @staticmethod
+    def _validate_priority(priority: int | None) -> None:
+        """Validate that priority is between 1 and 9."""
+        if priority is not None and not 1 <= priority <= 9:
+            raise ValueError("priority is an invalid value")
+
     def format_priority(self, priority: int | None) -> str:
+        """Convert a numeric priority to a descriptive value."""
         if not priority:
             return "none"
-        if 1 <= priority <= 4:
+
+        self._validate_priority(priority)
+
+        if priority <= 4:
             return "high"
         if priority == 5:
             return "medium"
-        if 6 <= priority <= 9:
-            return "low"
-
-        raise ValueError("priority is an invalid value")
+        return "low"
 
 
 class DefaultFormatter(InteractiveFormatter):
+    """Default formatter for terminal output."""
+
     def __init__(
         self,
         date_format: str = "%Y-%m-%d",
@@ -144,14 +157,20 @@ class DefaultFormatter(InteractiveFormatter):
     def compact(self, todo: Todo) -> str:
         return self.compact_multiple([todo])
 
-    def compact_multiple(self, todos: Iterable[Todo], hide_list: bool = False) -> str:
+    def compact_multiple(
+        self,
+        todos: Iterable[Todo],
+        hide_list: bool = False,
+    ) -> str:
         # TODO: format lines fuidly and drop the table
         # it can end up being more readable when too many columns are empty.
         # show dates that are in the future in yellow (in 24hs) or grey (future)
         table = []
+
         for todo in todos:
             completed = "X" if todo.is_completed else " "
             percent = todo.percent_complete or ""
+
             if percent:
                 percent = f" ({percent}%)"
 
@@ -167,6 +186,7 @@ class DefaultFormatter(InteractiveFormatter):
 
             due = self.format_datetime(todo.due) or "(no due date)"
             due_colour = self._due_colour(todo)
+
             if due_colour:
                 due = click.style(str(due), fg=due_colour)
 
@@ -178,12 +198,14 @@ class DefaultFormatter(InteractiveFormatter):
                 if not todo.list:
                     raise ValueError("Cannot format todo without a list")
 
-                summary = f"{todo.summary} {self.format_database(todo.list)}{percent}"
+                summary = (
+                    f"{todo.summary} "
+                    f"{self.format_database(todo.list)}{percent}"
+                )
 
-            # TODO: add spaces on the left based on max todos"
-
+            # TODO: add spaces on the left based on max todos
             # FIXME: double space when no priority
-            # split into parts to satisfy linter line too long
+
             table.append(
                 f"[{completed}] {todo.id} {priority} {due} "
                 f"{recurring}{summary}{categories}"
@@ -193,11 +215,14 @@ class DefaultFormatter(InteractiveFormatter):
 
     def _due_colour(self, todo: Todo) -> str:
         now = self.now if isinstance(todo.due, datetime) else self.now.date()
+
         if todo.due:
             if todo.due <= now and not todo.is_completed:
                 return "red"
+
             if todo.due >= now + timedelta(hours=24):
                 return "white"
+
             if todo.due >= now:
                 return "yellow"
 
@@ -208,59 +233,88 @@ class DefaultFormatter(InteractiveFormatter):
 
         if value.strip().count("\n") == 0:
             return f"\n\n{formatted_title}: {value}"
+
         return f"\n\n{formatted_title}:\n{value}"
 
     def detailed(self, todo: Todo) -> str:
         extra_lines = []
+
         if todo.description:
-            extra_lines.append(self._format_multiline("Description", todo.description))
+            extra_lines.append(
+                self._format_multiline(
+                    "Description",
+                    todo.description,
+                )
+            )
 
         if todo.location:
-            extra_lines.append(self._format_multiline("Location", todo.location))
+            extra_lines.append(
+                self._format_multiline(
+                    "Location",
+                    todo.location,
+                )
+            )
 
         return f"{self.compact(todo)}{''.join(extra_lines)}"
 
     def format_datetime(self, dt: date | None) -> str | None:
         if not dt:
             return ""
+
         if isinstance(dt, datetime):
             return dt.strftime(self.datetime_format)
+
         return dt.strftime(self.date_format)
 
     def parse_priority(self, priority: str | None) -> int | None:
         if priority is None or priority == "":
             return None
+
         if priority == "low":
             return 9
+
         if priority == "medium":
             return 5
+
         if priority == "high":
             return 4
+
         if priority == "none":
             return 0
-        raise ValueError("Priority has to be one of low, medium, high or none")
+
+        raise ValueError(
+            "Priority has to be one of low, medium, high or none"
+        )
 
     def format_priority_compact(self, priority: int | None) -> str:
+        """Format a numeric priority using compact symbols."""
         if not priority:
             return ""
-        if 1 <= priority <= 4:
+
+        self._validate_priority(priority)
+
+        if priority <= 4:
             return "!!!"
+
         if priority == 5:
             return "!!"
-        if 6 <= priority <= 9:
-            return "!"
 
-        raise ValueError("priority is an invalid value")
+        return "!"
 
     def parse_datetime(self, dt: str | None) -> date | None:
         if not dt:
             return None
 
         rv = self._parse_datetime_naive(dt)
-        return rv.replace(tzinfo=self.tz) if isinstance(rv, datetime) else rv
+
+        return (
+            rv.replace(tzinfo=self.tz)
+            if isinstance(rv, datetime)
+            else rv
+        )
 
     def _parse_datetime_naive(self, dt: str) -> date:
-        """Parse dt and returns a naive datetime or a date"""
+        """Parse dt and return a naive datetime or a date."""
         with contextlib.suppress(ValueError):
             return datetime.strptime(dt, self.datetime_format)
 
@@ -269,24 +323,31 @@ class DefaultFormatter(InteractiveFormatter):
 
         with contextlib.suppress(ValueError):
             return datetime.combine(
-                self.now.date(), datetime.strptime(dt, self.time_format).time()
+                self.now.date(),
+                datetime.strptime(dt, self.time_format).time(),
             )
 
         rv, pd_ctx = self._parsedatetime_calendar.parse(dt)
+
         if not pd_ctx.hasDateOrTime:
             raise ValueError(f"Time description not recognized: {dt}")
+
         return datetime.fromtimestamp(mktime(rv))
 
 
 class HumanizedFormatter(DefaultFormatter):
+    """Formatter that displays dates in human-readable form."""
+
     def format_datetime(self, dt: date | None) -> str:
         if not dt:
             return ""
 
         if isinstance(dt, datetime):
             rv = humanize.naturaltime(self.now - dt)
+
             if " from now" in rv:
                 rv = f"in {rv[:-9]}"
+
         elif isinstance(dt, date):
             rv = humanize.naturaldate(dt)
 
@@ -294,6 +355,8 @@ class HumanizedFormatter(DefaultFormatter):
 
 
 class PorcelainFormatter(Formatter):
+    """Formatter that outputs todos as JSON."""
+
     def __init__(
         self,
         date_format: str = "%Y-%m-%d",
@@ -301,7 +364,7 @@ class PorcelainFormatter(Formatter):
         dt_separator: str = " ",
         tz_override: tzinfo | None = None,
     ) -> None:
-        # tz_override is accepted for compatibility but not used - porcelain uses UTC
+        # tz_override is accepted for compatibility but not used.
         pass
 
     def _todo_as_dict(self, todo: Todo) -> dict:
@@ -323,9 +386,17 @@ class PorcelainFormatter(Formatter):
         }
 
     def compact(self, todo: Todo) -> str:
-        return json.dumps(self._todo_as_dict(todo), indent=4, sort_keys=True)
+        return json.dumps(
+            self._todo_as_dict(todo),
+            indent=4,
+            sort_keys=True,
+        )
 
-    def compact_multiple(self, todos: Iterable[Todo], hide_list: bool = False) -> str:
+    def compact_multiple(
+        self,
+        todos: Iterable[Todo],
+        hide_list: bool = False,
+    ) -> str:
         data = [self._todo_as_dict(todo) for todo in todos]
         return json.dumps(data, indent=4, sort_keys=True)
 
@@ -335,9 +406,13 @@ class PorcelainFormatter(Formatter):
     def parse_priority(self, priority: str | None) -> int | None:
         if priority is None:
             return None
+
         try:
-            if int(priority) in range(10):
-                return int(priority)
+            value = int(priority)
+
+            if value in range(10):
+                return value
+
             raise ValueError("Priority has to be in the range 0-9")
         except ValueError as e:
             raise click.BadParameter(str(e)) from None
@@ -351,10 +426,17 @@ class PorcelainFormatter(Formatter):
                 dt = datetime.fromordinal(value.toordinal())
             else:
                 dt = value
+
             return int(dt.timestamp())
+
         return None
 
     def parse_datetime(self, value: str | float | None) -> datetime | None:
         if value:
-            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+            return datetime.fromtimestamp(
+                float(value),
+                tz=timezone.utc,
+            )
+
         return None
+
