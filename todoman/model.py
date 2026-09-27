@@ -164,9 +164,7 @@ class Todo:
     )
 
     def __setattr__(self, name: str, value: None | str | int | list) -> None:
-        """Check type and avoid setting fields to None"""
-        """when that is not a valid attribue."""
-
+        """Check type and avoid setting fields to None when invalid."""
         v = value
 
         if name in Todo.RRULE_FIELDS:
@@ -365,7 +363,7 @@ class VtodoWriter:
                 else:
                     raise Exception(f"Unknown field {source} serialized.")
 
-                self.vtodo.pop(target)  # Removes if None, avoids dupes
+                self.vtodo.pop(target)
                 if value:
                     logger.debug("Setting field %s to %s.", target, value)
                     self.vtodo.add(target, value)
@@ -751,6 +749,23 @@ class Cache:
 
         return rv
 
+    @staticmethod
+    def _build_order(sort: Iterable, reverse: bool) -> str:
+        """Build the SQL ORDER BY clause from the requested sort fields."""
+        order_items = []
+
+        for field in sort:
+            if field.startswith("-"):
+                field_name = field[1:]
+                direction = "ASC" if reverse else "DESC"
+            else:
+                field_name = field
+                direction = "DESC" if reverse else "ASC"
+
+            order_items.append(f" {field_name} {direction}")
+
+        return ",".join(order_items)
+
     def todos(
         self,
         *,
@@ -808,26 +823,34 @@ class Cache:
             q = ", ".join(["?"] * len(lists))
             extra_where.append(f"AND files.list_name IN ({q})")
             params.extend(lists)
+
         if categories:
             category_slots = ", ".join(["?"] * len(categories))
-            extra_where.append(f"AND categories.category_upper IN ({category_slots})")
+            extra_where.append(
+                f"AND categories.category_upper IN ({category_slots})"
+            )
             params = params + [category.upper() for category in categories]
+
         if priority:
             extra_where.append("AND PRIORITY > 0 AND PRIORITY <= ?")
             params.append(f"{priority}")
+
         if location:
             extra_where.append("AND location LIKE ?")
             params.append(f"%{location}%")
+
         if grep:
             # # requires sqlite with pcre, which won't be available everywhere:
             # extra_where.append('AND summary REGEXP ?')
             # params.append(grep)
             extra_where.append("AND summary LIKE ?")
             params.append(f"%{grep}%")
+
         if due:
             max_due = (datetime.now() + timedelta(hours=due)).timestamp()
             extra_where.append("AND due IS NOT NULL AND due < ?")
             params.append(max_due)
+
         if start:
             is_before, dt = start
             timestamp = dt.timestamp()
@@ -837,17 +860,13 @@ class Cache:
             else:
                 extra_where.append("AND start >= ?")
                 params.append(timestamp)
+
         if startable:
             extra_where.append("AND (start IS NULL OR start <= ?)")
             params.append(datetime.now().timestamp())
+
         if sort:
-            order_items = []
-            for s in sort:
-                if s.startswith("-"):
-                    order_items.append(f" {s[1:]} ASC")
-                else:
-                    order_items.append(f" {s} DESC")
-            order = ",".join(order_items)
+            order = self._build_order(sort, reverse)
         else:
             order = """
                 completed_at DESC,
@@ -855,11 +874,6 @@ class Cache:
                 due IS NOT NULL, due DESC,
                 created_at ASC
             """
-
-        if not reverse:
-            # Note the change in case to avoid swapping all of them. sqlite
-            # doesn't care about casing anyway.
-            order = order.replace(" DESC", " asc").replace(" ASC", " desc")
 
         query = """
         SELECT DISTINCT todos.*, files.list_name, files.path,
@@ -893,6 +907,7 @@ class Cache:
                     path,
                 )
                 warned_paths.add(path)
+
             seen_paths.add(path)
             yield todo
 
@@ -996,6 +1011,7 @@ class Cache:
             """,
                 (result["path"],),
             ).fetchone()
+
             if count["c"] > 1:
                 raise exceptions.ReadOnlyTodoError(result["path"])
 
@@ -1099,9 +1115,11 @@ class Database:
                 TodoList.colour_for_path(path),
                 paths[path],
             )
+
             for entry in os.listdir(path):
                 if not entry.endswith(".ics"):
                     continue
+
                 entry_path = os.path.join(path, entry)
                 mtime = _getmtime(entry_path)
                 paths_to_mtime[entry_path] = mtime
@@ -1125,7 +1143,7 @@ class Database:
                         # TODO: use cal.todos after icalendar>=7
                         assert isinstance(component, icalendar.Todo)
                         self.cache.add_vtodo(component, entry_path)
-            except Exception:
+            except (OSError, ValueError):
                 logger.exception("Failed to read entry %s.", entry_path)
 
         self.cache.save_to_disk()
