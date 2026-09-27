@@ -1,4 +1,4 @@
-
+"""Formatting utilities for todo output."""
 from __future__ import annotations
 
 import contextlib
